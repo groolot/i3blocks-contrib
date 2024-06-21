@@ -1,14 +1,14 @@
-# `my-external-ip`
+# `my-public-ip`
 
-Display the external IP address returned by an external IP provider,
+Display the public IP address returned by an public IP provider,
 such as [ip.yunohost.org](http://ip.yunohost.org) or
 [ipv4.icanhazeip.com](http://ipv4.icanhazeip.com).
 
 Offers clipboarding with middle mouse button click on the block, even
 in short display.
 
-![](my-external-ip-long.png)
-![](my-external-ip-short.png)
+![](my-public-ip-long.png)
+![](my-public-ip-short.png)
 
 # Dependencies
 
@@ -18,19 +18,19 @@ in short display.
 # Config
 ## Output with pango markup available
 ```INI
-[my-external-ip]
-command=$SCRIPT_DIR/my-external-ip
+[my-public-ip]
+command=$SCRIPT_DIR/my-public-ip
 markup=pango
 interval=60
 color=#aaffaa
-# external_ip_provider=ip.yunohost.org
+# public_ip_provider=ip.yunohost.org
 ```
 
 ## Classic output
 ```INI
-[my-external-ip]
-command=$SCRIPT_DIR/my-external-ip
+[my-public-ip]
+command=$SCRIPT_DIR/my-public-ip
 interval=60
 color=#aaffaa
-# external_ip_provider=ipv4.icanhazeip.com
+# public_ip_provider=ipv4.icanhazeip.com
 ```
