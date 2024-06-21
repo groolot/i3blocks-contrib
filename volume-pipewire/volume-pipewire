@@ -3,36 +3,27 @@
 
 set -a
 
-AUDIO_HIGH_SYMBOL=${AUDIO_HIGH_SYMBOL:-'  '}
-
+AUDIO_HIGH_SYMBOL=${AUDIO_HIGH_SYMBOL:-' '}
 AUDIO_MED_THRESH=${AUDIO_MED_THRESH:-50}
 AUDIO_MED_SYMBOL=${AUDIO_MED_SYMBOL:-'  '}
-
 AUDIO_LOW_THRESH=${AUDIO_LOW_THRESH:-0}
-AUDIO_LOW_SYMBOL=${AUDIO_LOW_SYMBOL:-'  '}
-
-AUDIO_MUTED_SYMBOL=${AUDIO_MUTED_SYMBOL:-'  '}
-
-AUDIO_DELTA=${AUDIO_DELTA:-5}
+AUDIO_LOW_SYMBOL=${AUDIO_LOW_SYMBOL:-'   '}
+AUDIO_MUTED_SYMBOL=${AUDIO_MUTED_SYMBOL:-'   '}
 
 DEFAULT_COLOR=${DEFAULT_COLOR:-"#ffffff"}
 MUTED_COLOR=${MUTED_COLOR:-"#a0a0a0"}
 
-LONG_FORMAT=${LONG_FORMAT:-'${SYMB} ${VOL}% [${INDEX}:${NAME}]'}
-SHORT_FORMAT=${SHORT_FORMAT:-'${SYMB} ${VOL}% [${INDEX}]'}
+PRINT_FORMAT=${PRINT_FORMAT:-'<span color="${COLOR}">${SYMB} ${VOL}% [${INDEX}:${NAME}]</span>'}
 USE_ALSA_NAME=${USE_ALSA_NAME:-0}
 USE_DESCRIPTION=${USE_DESCRIPTION:-0}
-
 SUBSCRIBE=${SUBSCRIBE:-0}
-
 MIXER=${MIXER:-""}
 SCONTROL=${SCONTROL:-""}
 
 while getopts F:Sf:adH:M:L:X:T:t:C:c:i:m:s:h opt; do
     case "$opt" in
         S) SUBSCRIBE=1 ;;
-        F) LONG_FORMAT="$OPTARG" ;;
-        f) SHORT_FORMAT="$OPTARG" ;;
+        F) PRINT_FORMAT="$OPTARG" ;;
         a) USE_ALSA_NAME=1 ;;
         d) USE_DESCRIPTION=1 ;;
         H) AUDIO_HIGH_SYMBOL="$OPTARG" ;;
@@ -43,17 +34,16 @@ while getopts F:Sf:adH:M:L:X:T:t:C:c:i:m:s:h opt; do
         t) AUDIO_LOW_THRESH="$OPTARG" ;;
         C) DEFAULT_COLOR="$OPTARG" ;;
         c) MUTED_COLOR="$OPTARG" ;;
-        i) AUDIO_INTERVAL="$OPTARG" ;;
         m) MIXER="$OPTARG" ;;
         s) SCONTROL="$OPTARG" ;;
         h) printf \
-"Usage: volume-pulseaudio [-S] [-F format] [-f format] [-p] [-a|-d] [-H symb] [-M symb]
-        [-L symb] [-X symb] [-T thresh] [-t thresh] [-C color] [-c color] [-i inter] 
+"Usage: volume-pipewire [-S] [-F format] [-a|-d] [-H symb] [-M symb]
+        [-L symb] [-X symb] [-T thresh] [-t thresh] [-C color] [-c color]
         [-m mixer] [-s scontrol] [-h]
 Options:
--F, -f\tOutput format (-F long format, -f short format) to use, with exposed variables:
-\${SYMB}, \${VOL}, \${INDEX}, \${NAME}
--S\tSubscribe to volume events (requires persistent block, always uses long format)
+-F\tOutput format to use, with exposed variables:
+\t\t\${COLOR}, \${SYMB}, \${VOL}, \${INDEX}, \${NAME}
+-S\tSubscribe to volume events (requires persistent block, do NOT adapt to short name format)
 -a\tUse ALSA name if possible
 -d\tUse device description instead of name if possible
 -H\tSymbol to use when audio level is high. Default: '$AUDIO_HIGH_SYMBOL'
@@ -64,9 +54,8 @@ Options:
 -t\tThreshold for low audio level. Default: $AUDIO_LOW_THRESH
 -C\tColor for non-muted audio. Default: $DEFAULT_COLOR
 -c\tColor for muted audio. Default: $MUTED_COLOR
--i\tInterval size of volume increase/decrease. Default: $AUDIO_DELTA
--m\tUse the given mixer.
--s\tUse the given scontrol.
+-m\tUse the given mixer
+-s\tUse the given scontrol
 -h\tShow this help text
 " && exit 0;;
     esac
@@ -96,8 +85,8 @@ function move_sinks_to_new_default {
 
 function set_default_playback_device_next {
     inc=${1:-1}
-    num_devices=$(pactl list sinks | grep -c Name:)
-    sink_arr=($(pactl list sinks | grep Name: | sed -r 's/\s+Name: (.+)/\1/'))
+    num_devices=$(pactl -f json list sinks | jq -r 'length')
+    sink_arr=($(pactl -f json list sinks | jq -r '.[].name'))
     default_sink=$(pactl get-default-sink)
     default_sink_index=$(for i in "${!sink_arr[@]}"; do if [[ "$default_sink" = "${sink_arr[$i]}" ]]; then echo "$i"; fi done)
     default_sink_index=$(( ($default_sink_index + $num_devices + $inc) % $num_devices ))
@@ -115,36 +104,27 @@ case "$BLOCK_BUTTON" in
 esac
 
 function print_format {
-    echo "$1" | envsubst '${SYMB}${VOL}${INDEX}${NAME}'
+    echo "$1" | envsubst '${COLOR}${SYMB}${VOL}${INDEX}${NAME}'
 }
 
 function print_block {
-    ACTIVE="$(pactl list sinks  | grep "State\: RUNNING" -B4 -A55)"
-    if [[ $ACTIVE = "" ]] ; then
-        ACTIVE="$(pactl list sinks | grep "$(pactl get-default-sink)" -B4 -A55)"
-    fi
-    ACTIVE="$(echo "$ACTIVE" | grep "Name:\|Volume: \(front-left\|mono\)\|Mute:\|api.alsa.pcm.card = \|node.nick = ")"
-    for Name in NAME MUTED VOL INDEX NICK; do
-        read $Name
-    done < <(echo "$ACTIVE")
-    INDEX=$(echo "$INDEX"  | grep -o '".*"' | sed 's/"//g')
-    VOL=$(echo "$VOL" | grep -o "[0-9]*%" | head -1 )
-    VOL="${VOL%?}"
-    NAME=$(echo "$NICK" | grep -o '".*"' | sed 's/"//g')
+    CONTENT=$(pactl -f json list sinks | jq -r '.[] | select(.state == "RUNNING") | {index: .index, name: .name, shortname: .properties."alsa.id", alsa_name: .properties."alsa.card_name", nick: .properties."node.nick", description: .description, vol: .volume, muted: .mute}')
+    NAME=$(jq -r '.name' <<< $CONTENT)
+    SHORTNAME=$(jq -r '.shortname' <<< $CONTENT)
+    ALSA_NAME=$(jq -r '.alsa_name' <<< $CONTENT)
+    NICK=$(jq -r '.nick' <<< $CONTENT)
+    DESCRIPTION=$(jq -r '.description' <<< $CONTENT)
+    MUTED=$(jq -r '.muted' <<< $CONTENT)
+    VOL=$(jq -r '[ .vol.[].value_percent ] | unique[0] | rtrimstr("%")' <<< $CONTENT)
+    INDEX=$(jq -r '.index' <<< $CONTENT)
 
     if [[ $USE_ALSA_NAME == 1 ]] ; then
-        ALSA_NAME=$(pactl list sinks |\
-awk '/^\s*\*/{f=1}/^\s*index:/{f=0}f' |\
-grep "alsa.name\|alsa.mixer_name" |\
-head -n1 |\
-sed 's/.*= "\(.*\)".*/\1/')
         NAME=${ALSA_NAME:-$NAME}
     elif [[ $USE_DESCRIPTION == 1 ]] ; then
-        DESCRIPTION=$(pactl list sinks  | grep "State\: RUNNING" -B4 -A55 | grep 'Description: ' | sed 's/^.*: //')
         NAME=${DESCRIPTION:-$NAME}
     fi
 
-    if [[ $MUTED =~ "no" ]] ; then
+    if [[ $MUTED =~ "false" ]] ; then
         SYMB=$AUDIO_HIGH_SYMBOL
         [[ $VOL -le $AUDIO_MED_THRESH ]] && SYMB=$AUDIO_MED_SYMBOL
         [[ $VOL -le $AUDIO_LOW_THRESH ]] && SYMB=$AUDIO_LOW_SYMBOL
@@ -154,16 +134,17 @@ sed 's/.*= "\(.*\)".*/\1/')
         COLOR=$MUTED_COLOR
     fi
 
-    if [[ $ACTIVE = "" ]] ; then
+    if [[ $CONTENT = "" ]] ; then
         echo "Sound inactive"
         COLOR='#222225'
     fi
 
     if [[ $SUBSCRIBE == 1 ]] ; then
-        print_format "$LONG_FORMAT"
+        print_format "$PRINT_FORMAT"
     else
-        print_format "$LONG_FORMAT"
-        print_format "$SHORT_FORMAT"
+        print_format "$PRINT_FORMAT"
+        NAME="${SHORTNAME}"
+        print_format "$PRINT_FORMAT"
         echo "$COLOR"
     fi
 }
